@@ -4,12 +4,18 @@ author: Veronika Hekrlová
 email: vhekrlova@seznam.cz
 """
 import sys
+import time
+import requests
+from bs4 import BeautifulSoup
+import csv
+
+import sys
+import time
 import requests
 from bs4 import BeautifulSoup
 import csv
 
 def zkontroluj_argumenty():
-    """Zkontroluje spravny pocet argumentu a validitu odkazu"""
     if len(sys.argv) != 3:
         print("Chyba: zadej 2 argumenty - odkaz a nazev souboru")
         sys.exit(1)
@@ -19,76 +25,94 @@ def zkontroluj_argumenty():
         sys.exit(1)
     return odkaz, sys.argv[2]
 
-def stahni_stranku(url):
-    """Stahne HTML stranku a vrati objekt BeautifulSoup"""
-    odpoved = requests.get(url)
-    odpoved.encoding = "utf-8"
-    return BeautifulSoup(odpoved.text, "html.parser")
+def stahni_stranku(url, pokusy=3, prodleva=2):
+    """Stáhne HTML stránku s retry a timeoutem."""
+    for i in range(pokusy):
+        try:
+            odpoved = requests.get(url, timeout=10)
+            odpoved.encoding = "utf-8"
+            return BeautifulSoup(odpoved.text, "html.parser")
+        except requests.exceptions.RequestException as e:
+            print(f"Chyba při stahování {url}: {e}")
+            if i < pokusy - 1:
+                print(f"Opakuji pokus ({i+1}/{pokusy}) za {prodleva} s...")
+                time.sleep(prodleva)
+            else:
+                raise
 
-def najdi_odkazy_obce(soup):
-    """Najde odkazy na vysledky obce (jen ps311)"""
-    odkazy = []
-    for a in soup.find_all("a"):
-        href = a.get("href", "")
-        if "ps311" in href and "xobec" in href:
-            plny_odkaz = "https://www.volby.cz/pls/ps2017nss/" + href
-            odkazy.append(plny_odkaz)
-    return odkazy
+def najdi_odkazy_a_obce(soup):
+    """
+    Vrátí seznam trojic (odkaz, kod_obce, nazev_obce)
+    z hlavní tabulky okresu.
+    """
+    vysledky = []
+    # Každý řádek s obcí má v prvním <td> kód, ve druhém název
+    for row in soup.find_all("tr"):
+        tds = row.find_all("td")
+        if len(tds) >= 2:
+            a_tag = tds[0].find("a")
+            if a_tag and "xobec" in a_tag.get("href", ""):
+                kod = tds[0].text.strip()
+                nazev = tds[1].text.strip()
+                plny_odkaz = "https://www.volby.cz/pls/ps2017nss/" + a_tag.get("href")
+                vysledky.append((plny_odkaz, kod, nazev))
+    return vysledky
 
-def ziskej_data_obce(url):
-    """Ziska data o obci vcetne hlasu pro strany"""
+def ziskej_data_obce(url, kod, nazev):
+    """Získá data pro danou obec (bez názvu obce – ten dostane z hlavní stránky)."""
     soup = stahni_stranku(url)
-
     try:
-        # zakladni udaje
-        kod = soup.find("td", {"class": "cislo"}).text.strip()
-        nazev = soup.find("td", {"class": "overflow_name"}).text.strip()
-
-        # volici, obalky, platne hlasy
+        # registrovaní, obálky, platné
         tds = [td.text.replace("\xa0", "") for td in soup.find_all("td", {"class": "cislo"})]
         volici = tds[3]
         obalky = tds[4]
         platne = tds[7]
 
-        # hlasy pro vsechny strany (ve dvou tabulkach)
+        # hlasy + názvy stran
         hlasy_strany = []
+        nazvy_stran = []
         for table in soup.find_all("table", {"class": "table"}):
             for row in table.find_all("tr"):
-                cislo_td = row.find_all("td", {"class": "cislo"})
-                if len(cislo_td) >= 2:
-                    # druhe cislo v radku je pocet hlasu
-                    hlasy_strany.append(cislo_td[1].text.replace("\xa0", ""))
+                nazev_strany_td = row.find("td", {"class": "overflow_name"})
+                cisla_td = row.find_all("td", {"class": "cislo"})
+                if nazev_strany_td and len(cisla_td) >= 2:
+                    nazvy_stran.append(nazev_strany_td.text.strip())
+                    hlasy_strany.append(cisla_td[1].text.replace("\xa0", ""))
 
-        return [kod, nazev, volici, obalky, platne] + hlasy_strany
+        return [kod, nazev, volici, obalky, platne] + hlasy_strany, nazvy_stran
 
     except AttributeError:
         print(f"Preskakuji {url} - neocekavana struktura")
-        return None
+        return None, None
 
-def uloz_csv(data, soubor):
-    """Ulozi data do csv souboru"""
+def uloz_csv(data, hlavicka, soubor):
     with open(soubor, mode="w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        for radek in data:
-            writer.writerow(radek)
+        writer.writerow(hlavicka)
+        writer.writerows(data)
 
 def hlavni():
     odkaz, vystup = zkontroluj_argumenty()
-    print("Stahuji hlavni stranku...")
+    print("Stahuji hlavní stránku...")
     soup = stahni_stranku(odkaz)
 
-    print("Hledam odkazy na obce...")
-    odkazy = najdi_odkazy_obce(soup)
+    print("Hledám odkazy a názvy obcí...")
+    odkazy_a_obce = najdi_odkazy_a_obce(soup)
 
     vsechna_data = []
-    for link in odkazy:
-        print(f"Zpracovavam {link}")
-        data_obec = ziskej_data_obce(link)
-        if data_obec:
-            vsechna_data.append(data_obec)
+    hlavicka = None
 
-    uloz_csv(vsechna_data, vystup)
-    print(f"Hotovo! Data ulozena do {vystup}")
+    for i, (link, kod, nazev) in enumerate(odkazy_a_obce):
+        print(f"Zpracovávám {kod} - {nazev}")
+        data_obec, nazvy_stran = ziskej_data_obce(link, kod, nazev)
+        if data_obec:
+            if hlavicka is None:
+                hlavicka = ["code", "location", "registered", "envelopes", "valid"] + nazvy_stran
+            vsechna_data.append(data_obec)
+        time.sleep(1)  # pauza 1 s mezi dotazy
+
+    uloz_csv(vsechna_data, hlavicka, vystup)
+    print(f"Hotovo! Data uložena do {vystup}")
 
 if __name__ == "__main__":
     hlavni()
