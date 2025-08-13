@@ -1,7 +1,6 @@
 Scraper výsledků voleb do PS 2017.
 
-Použití:
-    python scraper_ps2017.py <start_url> <výstup.csv>
+Použití: python main.py <start_url> <výstup.csv>
 
 Popis:
     - Stáhne stránku se seznamem obcí pro daný okres/kraj.
