@@ -3,41 +3,40 @@ main.py: třetí projekt do Engeto Online Python Akademie
 author: Veronika Hekrlová
 email: vhekrlova@seznam.cz
 """
-import sys              # pro práci s argumenty z příkazové řádky a ukončení programu
-import time             # pro čekání mezi dotazy na server (abychom ho nezahltili)
-import requests         # pro stahování HTML stránek
-from bs4 import BeautifulSoup  # pro parsování HTML
-import csv              # pro ukládání výsledků do CSV
+import sys
+import time
+import requests
+from bs4 import BeautifulSoup
+import csv
 
 def zkontroluj_argumenty():
-    # Ověří, že uživatel zadal přesně 2 argumenty (odkaz a jméno výstupního souboru)
+    ''' Ověří, že uživatel zadal přesně 2 argumenty (odkaz a jméno výstupního souboru)'''
     if len(sys.argv) != 3:
         print("Chyba: zadej 2 argumenty - odkaz a nazev souboru")
-        sys.exit(1)  # ukončí program
+        sys.exit(1)
 
-    odkaz = sys.argv[1]  # uloží první argument (odkaz)
+    odkaz = sys.argv[1]  #
     # Kontrola, zda odkaz obsahuje požadovanou část adresy
     if "https://www.volby.cz/pls/ps2017nss/" not in odkaz:
         print("Chyba: spatny odkaz")
         sys.exit(1)
 
-    return odkaz, sys.argv[2]  # vrátí odkaz a název souboru
+    return odkaz, sys.argv[2]
 
 def stahni_stranku(url, pokusy=3, prodleva=2):
     """Stáhne HTML stránku s opakováním (retry) a timeoutem."""
     for i in range(pokusy):
         try:
-            odpoved = requests.get(url, timeout=10)  # stáhne HTML s 10s timeoutem
-            odpoved.encoding = "utf-8"               # nastaví kódování na UTF-8
-            return BeautifulSoup(odpoved.text, "html.parser")  # vrátí parsovaný HTML
+            odpoved = requests.get(url, timeout=10)
+            odpoved.encoding = "utf-8"
+            return BeautifulSoup(odpoved.text, "html.parser")
         except requests.exceptions.RequestException as e:
             print(f"Chyba při stahování {url}: {e}")
-            # Pokud nejsme u posledního pokusu, počkáme a zkusíme znovu
             if i < pokusy - 1:
                 print(f"Opakuji pokus ({i+1}/{pokusy}) za {prodleva} s...")
                 time.sleep(prodleva)
             else:
-                raise  # po posledním pokusu chybu znovu vyhodíme
+                raise
 
 def najdi_odkazy_a_obce(soup):
     """
@@ -45,10 +44,10 @@ def najdi_odkazy_a_obce(soup):
     Vrací seznam trojic: (odkaz_na_obec, kod_obce, nazev_obce)
     """
     vysledky = []
-    for row in soup.find_all("tr"):  # pro každý řádek tabulky
+    for row in soup.find_all("tr"):
         tds = row.find_all("td")
-        if len(tds) >= 2:  # musí být aspoň dva sloupce (kód a název)
-            a_tag = tds[0].find("a")  # odkaz v prvním sloupci
+        if len(tds) >= 2:
+            a_tag = tds[0].find("a")
             if a_tag and "xobec" in a_tag.get("href", ""):
                 kod = tds[0].text.strip()   # kód obce
                 nazev = tds[1].text.strip() # název obce
@@ -113,11 +112,10 @@ def hlavni():
             if hlavicka is None:
                 hlavicka = ["code", "location", "registered", "envelopes", "valid"] + nazvy_stran
             vsechna_data.append(data_obec)
-        time.sleep(1)  # pauza 1 s mezi dotazy
+        time.sleep(1)
 
     uloz_csv(vsechna_data, hlavicka, vystup)
     print(f"Hotovo! Data uložena do {vystup}")
 
-# spustí hlavní funkci jen pokud je skript spuštěn přímo (ne importován)
 if __name__ == "__main__":
     hlavni()
