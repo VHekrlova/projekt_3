@@ -3,67 +3,70 @@ main.py: třetí projekt do Engeto Online Python Akademie
 author: Veronika Hekrlová
 email: vhekrlova@seznam.cz
 """
-
-import sys
-import time
-import requests
-from bs4 import BeautifulSoup
-import csv
+import sys              # pro práci s argumenty z příkazové řádky a ukončení programu
+import time             # pro čekání mezi dotazy na server (abychom ho nezahltili)
+import requests         # pro stahování HTML stránek
+from bs4 import BeautifulSoup  # pro parsování HTML
+import csv              # pro ukládání výsledků do CSV
 
 def zkontroluj_argumenty():
+    # Ověří, že uživatel zadal přesně 2 argumenty (odkaz a jméno výstupního souboru)
     if len(sys.argv) != 3:
         print("Chyba: zadej 2 argumenty - odkaz a nazev souboru")
-        sys.exit(1)
-    odkaz = sys.argv[1]
+        sys.exit(1)  # ukončí program
+
+    odkaz = sys.argv[1]  # uloží první argument (odkaz)
+    # Kontrola, zda odkaz obsahuje požadovanou část adresy
     if "https://www.volby.cz/pls/ps2017nss/" not in odkaz:
         print("Chyba: spatny odkaz")
         sys.exit(1)
-    return odkaz, sys.argv[2]
+
+    return odkaz, sys.argv[2]  # vrátí odkaz a název souboru
 
 def stahni_stranku(url, pokusy=3, prodleva=2):
-    """Stáhne HTML stránku s retry a timeoutem."""
+    """Stáhne HTML stránku s opakováním (retry) a timeoutem."""
     for i in range(pokusy):
         try:
-            odpoved = requests.get(url, timeout=10)
-            odpoved.encoding = "utf-8"
-            return BeautifulSoup(odpoved.text, "html.parser")
+            odpoved = requests.get(url, timeout=10)  # stáhne HTML s 10s timeoutem
+            odpoved.encoding = "utf-8"               # nastaví kódování na UTF-8
+            return BeautifulSoup(odpoved.text, "html.parser")  # vrátí parsovaný HTML
         except requests.exceptions.RequestException as e:
             print(f"Chyba při stahování {url}: {e}")
+            # Pokud nejsme u posledního pokusu, počkáme a zkusíme znovu
             if i < pokusy - 1:
                 print(f"Opakuji pokus ({i+1}/{pokusy}) za {prodleva} s...")
                 time.sleep(prodleva)
             else:
-                raise
+                raise  # po posledním pokusu chybu znovu vyhodíme
 
 def najdi_odkazy_a_obce(soup):
     """
-    Vrátí seznam trojic (odkaz, kod_obce, nazev_obce)
-    z hlavní tabulky okresu.
+    Najde v hlavní tabulce okresu všechny obce.
+    Vrací seznam trojic: (odkaz_na_obec, kod_obce, nazev_obce)
     """
     vysledky = []
-    # Každý řádek s obcí má v prvním <td> kód, ve druhém název
-    for row in soup.find_all("tr"):
+    for row in soup.find_all("tr"):  # pro každý řádek tabulky
         tds = row.find_all("td")
-        if len(tds) >= 2:
-            a_tag = tds[0].find("a")
+        if len(tds) >= 2:  # musí být aspoň dva sloupce (kód a název)
+            a_tag = tds[0].find("a")  # odkaz v prvním sloupci
             if a_tag and "xobec" in a_tag.get("href", ""):
-                kod = tds[0].text.strip()
-                nazev = tds[1].text.strip()
+                kod = tds[0].text.strip()   # kód obce
+                nazev = tds[1].text.strip() # název obce
                 plny_odkaz = "https://www.volby.cz/pls/ps2017nss/" + a_tag.get("href")
                 vysledky.append((plny_odkaz, kod, nazev))
     return vysledky
 
 def ziskej_data_obce(url, kod, nazev):
-    """Získá data pro danou obec (bez názvu obce – ten dostane z hlavní stránky)."""
+    """Získá detailní volební data pro jednu obec."""
     soup = stahni_stranku(url)
     try:
-        # registrovaní, obálky, platné
+        # z tabulky s třídou "cislo" vezmeme konkrétní indexy pro: registrovaní, obálky, platné hlasy
         tds = [td.text.replace("\xa0", "") for td in soup.find_all("td", {"class": "cislo"})]
         volici = tds[3]
         obalky = tds[4]
         platne = tds[7]
 
-        # hlasy + názvy stran
+        # hlasy pro strany + názvy stran
         hlasy_strany = []
         nazvy_stran = []
         for table in soup.find_all("table", {"class": "table"}):
@@ -71,23 +74,28 @@ def ziskej_data_obce(url, kod, nazev):
                 nazev_strany_td = row.find("td", {"class": "overflow_name"})
                 cisla_td = row.find_all("td", {"class": "cislo"})
                 if nazev_strany_td and len(cisla_td) >= 2:
-                    nazvy_stran.append(nazev_strany_td.text.strip())
-                    hlasy_strany.append(cisla_td[1].text.replace("\xa0", ""))
+                    nazvy_stran.append(nazev_strany_td.text.strip())  # název strany
+                    hlasy_strany.append(cisla_td[1].text.replace("\xa0", ""))  # počet hlasů
 
+        # vrátíme: kód, název obce, registrovaní, obálky, platné + všechny hlasy
         return [kod, nazev, volici, obalky, platne] + hlasy_strany, nazvy_stran
 
     except AttributeError:
+        # pokud stránka má jinou strukturu, přeskočíme ji
         print(f"Preskakuji {url} - neocekavana struktura")
         return None, None
 
 def uloz_csv(data, hlavicka, soubor):
+    """Uloží data do CSV souboru s hlavičkou."""
     with open(soubor, mode="w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(hlavicka)
-        writer.writerows(data)
+        writer.writerow(hlavicka)  # první řádek = hlavička
+        writer.writerows(data)     # zbytek = data
 
 def hlavni():
+    # načteme argumenty
     odkaz, vystup = zkontroluj_argumenty()
+
     print("Stahuji hlavní stránku...")
     soup = stahni_stranku(odkaz)
 
@@ -97,6 +105,7 @@ def hlavni():
     vsechna_data = []
     hlavicka = None
 
+    # projdeme každou obec
     for i, (link, kod, nazev) in enumerate(odkazy_a_obce):
         print(f"Zpracovávám {kod} - {nazev}")
         data_obec, nazvy_stran = ziskej_data_obce(link, kod, nazev)
@@ -109,5 +118,6 @@ def hlavni():
     uloz_csv(vsechna_data, hlavicka, vystup)
     print(f"Hotovo! Data uložena do {vystup}")
 
+# spustí hlavní funkci jen pokud je skript spuštěn přímo (ne importován)
 if __name__ == "__main__":
     hlavni()
