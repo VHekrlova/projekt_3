@@ -3,11 +3,6 @@ main.py: třetí projekt do Engeto Online Python Akademie
 author: Veronika Hekrlová
 email: vhekrlova@seznam.cz
 """
-import sys
-import time
-import requests
-from bs4 import BeautifulSoup
-import csv
 
 import sys
 import time
